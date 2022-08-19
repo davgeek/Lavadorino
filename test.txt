@@ -1,0 +1,190 @@
+#include <Arduino.h>
+#include <YA_FSM.h>
+
+const byte M_POWER = 5;
+const byte M_DIR = 4;
+const byte V_FILL = 3;
+const byte V_DRAIN = 2;
+const byte BTN_CALL = 6;
+
+#define CLOCKWISE LOW
+#define ANTICLOCKWISE HIGH
+#define RELAY_ON LOW
+#define RELAY_OFF HIGH
+
+// Create new FSM (num States, num Transition)
+YA_FSM stateMachine(4, 4);
+
+// Input Alias. We use Input as trigging condition in defined transition
+enum Input {StartFill, StartDrain, StartWash, StartSpin};
+
+// State Alias
+enum State {FILL, DRAIN, WASH, SPIN};
+
+// Helper for print labels instead integer when state change
+const char* stateName[] = { "FILL", "DRAIN", "WASH", "SPIN", "CALL" };
+
+// Stores last user input and the current active state
+Input input;
+
+#define FILL_TIME  4000  		  // 4s
+#define DRAIN_TIME 10000  		    // 10s
+#define WASH_TIME 10000  		    // 10s
+#define SPIN_TIME 10000  		    // 10s
+#define CALL_DELAY 2000			    // 2s
+
+void setupStateMachine();
+
+void setup() {
+  pinMode(M_POWER, OUTPUT);
+  pinMode(M_DIR, OUTPUT);
+  pinMode(V_FILL, OUTPUT);
+  pinMode(V_DRAIN, OUTPUT);
+  pinMode(BTN_CALL, INPUT_PULLUP);
+
+  digitalWrite(M_POWER, RELAY_OFF);
+  digitalWrite(M_DIR, RELAY_OFF);
+  digitalWrite(V_FILL, RELAY_OFF);
+  digitalWrite(V_DRAIN, RELAY_OFF);
+
+  Serial.begin(115200);
+	Serial.println(F("Starting State Machine...\n"));
+	setupStateMachine();
+
+  // Initial state
+	Serial.print(F("Active state: "));
+	Serial.println(stateName[stateMachine.GetState()]);
+}
+
+void loop() {
+  // Update State Machine	(true is state changed)
+  if(stateMachine.Update()){
+		Serial.print(F("Active state loop: "));
+		Serial.println(stateName[stateMachine.GetState()]);
+	}
+}
+
+/////////// STATE MACHINE FUNCTIONS //////////////////
+
+// Define "on entering" callback functions
+void onEnteringFill(){
+	Serial.println(F("Fill ON"));
+  digitalWrite(V_FILL, RELAY_ON);
+}
+
+void onEnteringDrain(){
+	Serial.println(F("Drain ON"));
+  digitalWrite(V_DRAIN, RELAY_ON);
+}
+
+void onEnteringWash(){
+	Serial.println(F("Wash ON"));
+  digitalWrite(M_POWER, RELAY_ON);
+}
+
+void onEnteringSpin(){
+	Serial.println(F("Spin ON"));
+  digitalWrite(M_DIR, CLOCKWISE);
+  digitalWrite(M_POWER, RELAY_ON);
+}
+
+// Define "on leaving" callback functions
+void onLeavingFill(){
+	Serial.println(F("Fill OFF\n"));
+  digitalWrite(V_FILL, RELAY_OFF);
+}
+
+void onLeavingDrain(){
+	Serial.println(F("Drain OFF\n"));
+  digitalWrite(V_DRAIN, RELAY_OFF);
+}
+
+void onLeavingWash(){
+	Serial.println(F("Wash OFF\n"));
+  digitalWrite(M_POWER, RELAY_OFF);
+}
+
+void onLeavingSpin(){
+	Serial.println(F("Spin OFF\n"));
+  digitalWrite(M_POWER, RELAY_OFF);
+}
+
+void setupStateMachine() {
+  // Add transitions with related callback functions
+	///// ---- Be carefull, total number of transitions MUST be as declared -------  ///////
+	stateMachine.AddTransition(FILL, WASH, [](){return input == Input::StartWash;}	);
+	stateMachine.AddTransition(WASH, DRAIN, [](){return input == Input::StartDrain;}	);
+	stateMachine.AddTransition(DRAIN, SPIN, [](){return input == Input::StartSpin;}	);
+	stateMachine.AddTransition(SPIN, FILL, [](){return input == Input::StartFill;}	);
+
+	// In this example we check the button state in the callback function
+	// stateMachine.AddTransition(WASH, CALL,
+	// 	[](){
+	// 		if(digitalRead(BTN_CALL) == LOW){					
+	// 			Serial.println(F("Start button pressed"));
+	// 			return true;
+	// 		}		
+	// 		return false;	
+	// 	});
+
+	stateMachine.SetOnEntering(FILL, onEnteringFill);
+	stateMachine.SetOnEntering(WASH, onEnteringWash);
+	stateMachine.SetOnEntering(DRAIN, onEnteringDrain);
+	stateMachine.SetOnEntering(SPIN, onEnteringSpin);
+
+	stateMachine.SetOnLeaving(FILL, onLeavingFill);
+	stateMachine.SetOnLeaving(WASH, onLeavingWash);
+	stateMachine.SetOnLeaving(DRAIN, onLeavingDrain);
+	stateMachine.SetOnLeaving(SPIN, onLeavingSpin);
+
+  // State FILL active
+  stateMachine.SetOnState(FILL,	
+		[](){ 
+			bool timeout = stateMachine.GetTimeout(stateMachine.GetState()); 
+			if(timeout) {
+				input = Input::StartWash;	
+			}
+		},
+    FILL_TIME);
+
+  // State WASH active
+  stateMachine.SetOnState(WASH,
+		[](){ 
+      // cycle motor here
+
+			bool timeout = stateMachine.GetTimeout(stateMachine.GetState()); 
+			if(timeout) {
+				input = Input::StartDrain;	
+			}
+		},
+    WASH_TIME);
+
+  // State DRAIN active
+  stateMachine.SetOnState(DRAIN,
+		[](){ 
+			bool timeout = stateMachine.GetTimeout(stateMachine.GetState()); 
+			if(timeout) {
+				input = Input::StartSpin;	
+			}
+		},
+    DRAIN_TIME);
+
+  // State SPIN active
+  stateMachine.SetOnState(SPIN,
+		[](){ 
+			bool timeout = stateMachine.GetTimeout(stateMachine.GetState()); 
+			if(timeout) {
+				input = Input::StartFill;	
+			}
+		},
+    SPIN_TIME);
+
+  //   // State CALL active (with timeout)
+	// stateMachine.SetOnState(CALL,
+	// 	[](){ 
+	// 		if(stateMachine.GetTimeout(stateMachine.GetState())) {
+	// 			input = Input::StartFill;
+	// 		}
+	// 	},
+	// 	CALL_DELAY);
+}
