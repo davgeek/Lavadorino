@@ -20,18 +20,20 @@ const char* stateName[] = { "IDLE", "FILL", "WASH", "DRAIN", "SPIN" };
 enum Input {StartIdle, StartFill, StartDrain, StartWash, StartSpin};
 Input input;
 
-#define FILL_TIME  5 * 60 * 1000
-#define DRAIN_TIME 2 * 60 * 1000
-#define WASH_TIME 7 * 60 * 1000
-#define SPIN_TIME 5 * 60 * 1000
+#define FILL_TIME  3000
+#define DRAIN_TIME 5000
+#define WASH_TIME 60000
+#define SPIN_TIME 5000
 
 int motorDir = CLOCKWISE;
 long dirPreviousMillis = 0;
-long dirInterval = 1500;
+long dirInterval = 3000;
 
-int motorPower = RELAY_ON;
+int motorPower = RELAY_OFF;
 long powerPreviousMillis = 0;
-long powerInterval = 1000;
+long powerInterval = dirInterval - 1000;
+
+long everySecondPreviousMillis = 0;
 
 /////////// STATE MACHINE FUNCTIONS //////////////////
 
@@ -100,7 +102,7 @@ void onStateFill() {
 
 void onStateWash() {
 	digitalWrite(V_FILL, RELAY_OFF);
-	digitalWrite(M_POWER, RELAY_ON);
+	//digitalWrite(M_POWER, RELAY_ON);
 }
 
 void onStateDrain() {
@@ -169,28 +171,28 @@ void loop() {
 	
 	if(fsm.GetState() == WASH) {
 		if(millis() - fsm.GetEnteringTime(WASH) > WASH_TIME){
-			input = Input::StartDrain;	
+			input = Input::StartDrain;
 		}
 
 		// motor dir cycle stuff
-		if(currentMillis - powerPreviousMillis > powerInterval) {
-			powerPreviousMillis = currentMillis;   
-			if (motorPower == RELAY_ON) {
-				motorPower = RELAY_OFF;
-			} else {
+		if(currentMillis - everySecondPreviousMillis > 1000L) {
+			everySecondPreviousMillis = currentMillis;
+			if (motorPower != digitalRead(M_POWER)) {
+				digitalWrite(M_POWER, motorPower);
+			}
+			if (motorPower == RELAY_OFF) {
+				digitalWrite(M_DIR, motorDir);
 				motorPower = RELAY_ON;
 			}
-			digitalWrite(M_POWER, motorPower);
-
-			if(currentMillis - dirPreviousMillis > dirInterval) {
-				dirPreviousMillis = currentMillis;   
-				if (motorDir == CLOCKWISE) {
-					motorDir = ANTICLOCKWISE;
-				} else {
-					motorDir = CLOCKWISE;
-				}
-				digitalWrite(M_DIR, motorDir);
+		}
+		if(currentMillis - dirPreviousMillis > dirInterval) {
+			dirPreviousMillis = currentMillis;
+			if (motorDir == CLOCKWISE) {
+				motorDir = ANTICLOCKWISE;
+			} else {
+				motorDir = CLOCKWISE;
 			}
+			motorPower = RELAY_OFF;
 		}
 	}
 
