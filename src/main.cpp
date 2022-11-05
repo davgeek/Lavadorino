@@ -3,17 +3,20 @@
 #include "Blinker.h"
 #include <JC_Button.h>
 
-const byte M_POWER = 5;
-const byte M_DIR = 4;
+const byte M_LEFT = 5;
+const byte M_RIGHT = 4;
 const byte V_FILL = 3;
 const byte V_DRAIN = 2;
-const byte BTN_CALL = 6;
+const byte BTN_1 = 6;
 const byte LED_1 = 7;
 const byte LED_2 = 8;
 const byte LED_3 = 9;
 
-#define CLOCKWISE HIGH
-#define COUNTERCLOCKWISE LOW
+#define CLOCKWISE 1
+#define COUNTERCLOCKWISE 0
+
+#define TRIAC_ON HIGH
+#define TRIAC_OFF LOW
 #define RELAY_ON LOW
 #define RELAY_OFF HIGH
 
@@ -25,15 +28,14 @@ const byte LED_3 = 9;
 
 YA_FSM fsm;
 
-// Create a Blinker (included utility class) for led blink handling
 Blinker led1(LED_1, BLINK1_TIME);
 Blinker led2(LED_2, BLINK1_TIME);
 Blinker led3(LED_3, BLINK1_TIME);
 
-Button myBtn(BTN_CALL);
+Button btn(BTN_1);
 
 bool readyToStartState = false;
-int lastPos = 0;
+int lastPositionSelected = 0;
 
 // State 
 enum State {IDLE, FILL, WASH, DRAIN, SPIN, PAUSE};
@@ -56,29 +58,36 @@ enum Input {
 Input input;
 State lastState;
 
-#define FILL_TIME  3000
-#define DRAIN_TIME 5000
-#define WASH_TIME 10000
-#define SPIN_TIME 5000
+#define FILL_TIME  300000L
+#define DRAIN_TIME 180000L
+#define WASH_TIME 420000L
+#define SPIN_TIME 230000L
 
 long cyclePreviousMillis = 0;
 long lastStatePauseMillis = 0;
 
 int motorDir = CLOCKWISE;
 int motorCounter = 0;
-int restCounter = 2;
+int restCounter = 0;
 bool motorState = false;
 
-#define MotorRotationDelay 5
-#define MotorRotationRestDelay 2
+#define MOTOR_ON_DURATION 3
+#define MOTOR_REST_DURATION 1
+
+void turnAllOff() {
+	digitalWrite(M_LEFT, TRIAC_OFF);
+	digitalWrite(M_RIGHT, TRIAC_OFF);
+	digitalWrite(V_FILL, TRIAC_OFF);
+	digitalWrite(V_DRAIN, TRIAC_OFF);
+}
 
 /////////// STATE MACHINE FUNCTIONS //////////////////
 void onEnteringIdle(){
 	Serial.println(F("Entering IDLE..."));
-	lastPos = 0;
+	lastPositionSelected = 0;
 	motorCounter = 0;
 	motorState = false;
-	restCounter = 2;
+	restCounter = 0;
 }
 
 void onEnteringFill(){
@@ -128,19 +137,11 @@ void onLeavingSpin(){
 }
 
 void onStateIdle() {
-	// turn off all
-	digitalWrite(M_POWER, RELAY_OFF);
-	digitalWrite(M_DIR, CLOCKWISE);
-	digitalWrite(V_FILL, RELAY_OFF);
-	digitalWrite(V_DRAIN, RELAY_OFF);
+	turnAllOff();
 }
 
 void onStatePause() {
-	// turn off all
-	digitalWrite(M_POWER, RELAY_OFF);
-	digitalWrite(M_DIR, motorDir);
-	digitalWrite(V_FILL, RELAY_OFF);
-	digitalWrite(V_DRAIN, RELAY_OFF);
+	turnAllOff();
 
 	switch (lastState) {
 		case FILL:
@@ -163,30 +164,29 @@ void onStatePause() {
 }
 
 void onStateFill() {
-	digitalWrite(V_FILL, RELAY_ON);
+	digitalWrite(V_FILL, TRIAC_ON);
 	led1.setTime(BLINK1_TIME);
 	led1.blink(true);
 }
 
 void onStateWash() {
-	digitalWrite(V_FILL, RELAY_OFF);
+	digitalWrite(V_FILL, TRIAC_OFF);
 	led2.setTime(BLINK1_TIME);
 	led2.blink(true);
 }
 
 void onStateDrain() {
-	digitalWrite(M_POWER, RELAY_OFF);
-	digitalWrite(M_DIR, CLOCKWISE);
-	digitalWrite(V_DRAIN, RELAY_ON);
+	digitalWrite(M_LEFT, TRIAC_OFF);
+	digitalWrite(M_RIGHT, TRIAC_OFF);
+	digitalWrite(V_DRAIN, TRIAC_ON);
 	led3.setTime(BLINK1_TIME);
 	led3.blink(true);
 }
 
 void onStateSpin() {
-	digitalWrite(M_POWER, RELAY_OFF);
-	digitalWrite(M_DIR, CLOCKWISE);
-	digitalWrite(V_DRAIN, RELAY_ON);
-	digitalWrite(M_POWER, RELAY_ON);
+	digitalWrite(M_LEFT, TRIAC_OFF);
+	digitalWrite(V_DRAIN, TRIAC_ON);
+	digitalWrite(M_RIGHT, TRIAC_ON);
 	led3.blink(true);
 }
 
@@ -216,9 +216,9 @@ void setupStateMachine() {
 }
 
 void checkPause(Input input, State state) {
-	myBtn.read();
+	btn.read();
 
-	if (myBtn.pressedFor(3000)) {
+	if (btn.pressedFor(3000)) {
 		Serial.println("PAUSE");
 		input = input;
 		lastState = state;
@@ -233,21 +233,21 @@ void ledControl(bool led1State, bool led2State, bool led3State) {
 }
 
 void setup() {
-	pinMode(M_POWER, OUTPUT);
-	pinMode(M_DIR, OUTPUT);
+	pinMode(M_LEFT, OUTPUT);
+	pinMode(M_RIGHT, OUTPUT);
 	pinMode(V_FILL, OUTPUT);
 	pinMode(V_DRAIN, OUTPUT);
 	pinMode(LED_1, OUTPUT);
 	pinMode(LED_2, OUTPUT);
 	pinMode(LED_3, OUTPUT);
-	pinMode(BTN_CALL, INPUT_PULLUP);
+	pinMode(BTN_1, INPUT_PULLUP);
 
-	digitalWrite(M_POWER, RELAY_OFF);
-	digitalWrite(M_DIR, CLOCKWISE);
-	digitalWrite(V_FILL, RELAY_OFF);
-	digitalWrite(V_DRAIN, RELAY_OFF);
+	digitalWrite(M_LEFT, TRIAC_OFF);
+	digitalWrite(M_RIGHT, TRIAC_OFF);
+	digitalWrite(V_FILL, TRIAC_OFF);
+	digitalWrite(V_DRAIN, TRIAC_OFF);
 
-	myBtn.begin();
+	btn.begin();
 
 	Serial.begin(115200);
 	Serial.println(F("Starting Lavadorino...\n"));
@@ -264,21 +264,21 @@ void loop() {
 	
 	if(fsm.GetState() == IDLE) {
 
-		myBtn.read();
+		btn.read();
 
-		if (myBtn.wasReleased()) {
-			lastPos++;
-		} else if (myBtn.pressedFor(1500)) {
+		if (btn.wasReleased()) {
+			lastPositionSelected++;
+		} else if (btn.pressedFor(1500)) {
 			readyToStartState = true;
 		}
 
-		if (lastPos > MAX_STEPS) {
-			lastPos = MIN_STEPS;
-		} else if (lastPos < MIN_STEPS) {
-			lastPos = MAX_STEPS;
+		if (lastPositionSelected > MAX_STEPS) {
+			lastPositionSelected = MIN_STEPS;
+		} else if (lastPositionSelected < MIN_STEPS) {
+			lastPositionSelected = MAX_STEPS;
 		}
 
-		switch (lastPos) {
+		switch (lastPositionSelected) {
 			case 0:
 				ledControl(HIGH, LOW, LOW);
 				input = Input::ManualFill;
@@ -295,9 +295,9 @@ void loop() {
 	}
 
 	if(fsm.GetState() == PAUSE) {
-		myBtn.read();
+		btn.read();
 
-		if (myBtn.pressedFor(3000)) {
+		if (btn.pressedFor(3000)) {
 			Serial.println("UNPAUSE");
 			switch (lastState) {
 				case WASH:
@@ -333,15 +333,22 @@ void loop() {
 		if(currentMillis - cyclePreviousMillis > 1000) {
 			cyclePreviousMillis = currentMillis;
 			
-			if (motorCounter <= MotorRotationDelay && restCounter == MotorRotationRestDelay) {
+			if (motorCounter <= MOTOR_ON_DURATION && restCounter == MOTOR_REST_DURATION) {
+				digitalWrite(M_LEFT, TRIAC_OFF);
+				digitalWrite(M_RIGHT, TRIAC_OFF);
 				Serial.println("Encendido");
-				digitalWrite(M_POWER, RELAY_ON);
+				if (motorDir == CLOCKWISE) {
+					digitalWrite(M_RIGHT, TRIAC_ON);
+				} else {
+					digitalWrite(M_LEFT, TRIAC_ON);
+				}
 				motorState = true;
 				restCounter = 0;
 			}
 
-			if (motorCounter == MotorRotationDelay) {
-				digitalWrite(M_POWER, RELAY_OFF);
+			if (motorCounter == MOTOR_ON_DURATION) {
+				digitalWrite(M_RIGHT, TRIAC_OFF);
+				digitalWrite(M_LEFT, TRIAC_OFF);
 				Serial.println("Apagado");
 				motorState = false;
 				if (motorDir == CLOCKWISE) {
@@ -352,12 +359,10 @@ void loop() {
 					motorDir = CLOCKWISE;
 				}
 				
-				digitalWrite(M_DIR, motorDir);
 				motorCounter = 0;
 			}
 
 			if (!motorState) {
-				Serial.println("Descansando ++");
 				restCounter++;
 			}
 
